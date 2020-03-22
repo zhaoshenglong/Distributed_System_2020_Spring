@@ -20,11 +20,24 @@
 
 #include "rdt_struct.h"
 #include "rdt_receiver.h"
+#include "helper.h"
+
+/* Global variable definition */
+static seq_nr frame_expected;
+static seq_nr frame_upper_bound;
+static struct frame sliding_window[WINDOW_SZ];
+static bool arrived[WINDOW_SZ];
 
 
 /* receiver initialization, called once at the very beginning */
 void Receiver_Init()
 {
+    frame_expected = 0;
+    frame_upper_bound = WINDOW_SZ;
+    for (int i = 0; i < WINDOW_SZ; i++) {
+        arrived[i] = false;
+    }
+    
     fprintf(stdout, "At %.2fs: receiver initializing ...\n", GetSimulationTime());
 }
 
@@ -41,23 +54,40 @@ void Receiver_Final()
    receiver */
 void Receiver_FromLowerLayer(struct packet *pkt)
 {
-    /* 1-byte header indicating the size of the payload */
-    int header_size = 1;
-
+    /* extract data from frame */
+    struct frame *f = (struct frame*)(pkt);
+    
+    /* 4-byte header size */
+    int header_size = 4;
+    
     /* construct a message and deliver to the upper layer */
     struct message *msg = (struct message*) malloc(sizeof(struct message));
     ASSERT(msg!=NULL);
-
-    msg->size = pkt->data[0];
-
-    /* sanity check in case the packet is corrupted */
-    if (msg->size<0) msg->size=0;
-    if (msg->size>RDT_PKTSIZE-header_size) msg->size=RDT_PKTSIZE-header_size;
-
-    msg->data = (char*) malloc(msg->size);
+    msg->data = (char*) malloc(RDT_PKTSIZE - header_size);
     ASSERT(msg->data!=NULL);
-    memcpy(msg->data, pkt->data+header_size, msg->size);
-    Receiver_ToUpperLayer(msg);
+    
+    if (verify_checksum(f)){
+        if (between(frame_expected, f->seq, frame_upper_bound) && !arrived[f->seq % WINDOW_SZ]) {
+            arrived[f->seq % WINDOW_SZ] = true;
+            sliding_window[f->seq % WINDOW_SZ] = *f;
+            while (arrived[frame_expected % WINDOW_SZ]) {
+                msg->size = sliding_window[frame_expected % WINDOW_SZ].size;
+                memcpy(msg->data, sliding_window[frame_expected % WINDOW_SZ].data, msg->size);
+                Receiver_ToUpperLayer(msg);
+                arrived[frame_expected % WINDOW_SZ] = false;
+                inc(&frame_expected);
+                inc(&frame_upper_bound);
+            }
+            
+        }
+    } else {
+        /* send nak */
+        f->nak = 1;
+        f->ack = (frame_expected + MAX_SEQ) % (MAX_SEQ + 1);
+        struct packet *p = (struct packet *)f;
+        Receiver_ToLowerLayer(p);
+    }
+
 
     /* don't forget to free the space */
     if (msg->data!=NULL) free(msg->data);

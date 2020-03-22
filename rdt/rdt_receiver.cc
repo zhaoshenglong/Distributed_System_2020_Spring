@@ -25,14 +25,15 @@
 /* Global variable definition */
 static seq_nr frame_expected;
 static seq_nr frame_upper_bound;
-static struct frame sliding_window[WINDOW_SZ];
+static struct frame *sliding_window[WINDOW_SZ];
 static bool arrived[WINDOW_SZ];
-
+static struct message* current_msg;
 
 /* receiver initialization, called once at the very beginning */
 void Receiver_Init()
 {
     frame_expected = 0;
+    current_msg = nullptr;
     frame_upper_bound = WINDOW_SZ;
     for (int i = 0; i < WINDOW_SZ; i++) {
         arrived[i] = false;
@@ -50,46 +51,64 @@ void Receiver_Final()
     fprintf(stdout, "At %.2fs: receiver finalizing ...\n", GetSimulationTime());
 }
 
+static void send_ack(seq_nr ack, int nak) {
+    struct frame f;
+    f.ack = ack;
+    f.nak = nak;
+    f.checksum = compute_checksum(&f);
+    Receiver_ToLowerLayer((struct packet*)&f);
+}
+
+static void reassembly_msg(struct frame *f) {
+    if(!current_msg) {
+        current_msg = (struct message*) malloc(sizeof(struct message));
+        current_msg->size = 0;
+        current_msg->data = nullptr;
+    }
+    current_msg->data = (char*)realloc(current_msg->data, current_msg->size + f->size);
+    memcpy(current_msg->data + current_msg->size, f->data, f->size);
+    current_msg->size += f->size;
+    
+    if (f->is_end) {
+        Receiver_ToUpperLayer(current_msg);
+        free(current_msg->data);
+        free(current_msg);
+        current_msg = nullptr;
+    }
+    free(f);
+}
+
 /* event handler, called when a packet is passed from the lower layer at the 
    receiver */
 void Receiver_FromLowerLayer(struct packet *pkt)
 {
     /* extract data from frame */
     struct frame *f = (struct frame*)(pkt);
-    
-    /* 4-byte header size */
-    int header_size = 4;
-    
-    /* construct a message and deliver to the upper layer */
-    struct message *msg = (struct message*) malloc(sizeof(struct message));
-    ASSERT(msg!=NULL);
-    msg->data = (char*) malloc(RDT_PKTSIZE - header_size);
-    ASSERT(msg->data!=NULL);
-    
+    //printf("Receiver from lower layer %d\n", verify_checksum(f));
     if (verify_checksum(f)){
         if (between(frame_expected, f->seq, frame_upper_bound) && !arrived[f->seq % WINDOW_SZ]) {
             arrived[f->seq % WINDOW_SZ] = true;
-            sliding_window[f->seq % WINDOW_SZ] = *f;
-            while (arrived[frame_expected % WINDOW_SZ]) {
-                msg->size = sliding_window[frame_expected % WINDOW_SZ].size;
-                memcpy(msg->data, sliding_window[frame_expected % WINDOW_SZ].data, msg->size);
-                Receiver_ToUpperLayer(msg);
-                arrived[frame_expected % WINDOW_SZ] = false;
-                inc(&frame_expected);
-                inc(&frame_upper_bound);
+            struct frame *r = (struct frame *) malloc(sizeof(struct frame));
+            memcpy(r, f, sizeof(struct frame));
+            sliding_window[f->seq % WINDOW_SZ] = r;
+
+            if (arrived[frame_expected % WINDOW_SZ]) {
+                int ack = frame_expected;
+                while (arrived[frame_expected % WINDOW_SZ]) {
+                    arrived[frame_expected % WINDOW_SZ] = false;
+                    reassembly_msg(sliding_window[frame_expected % WINDOW_SZ]);
+                    
+                    ack = frame_expected;
+                    /* Moves sliding window */
+                    inc(&frame_expected);
+                    inc(&frame_upper_bound);
+                }
+                /* Ack n implies ack n-1, n-2... */
+                send_ack(ack, 0);
             }
-            
         }
     } else {
         /* send nak */
-        f->nak = 1;
-        f->ack = (frame_expected + MAX_SEQ) % (MAX_SEQ + 1);
-        struct packet *p = (struct packet *)f;
-        Receiver_ToLowerLayer(p);
+        send_ack(f->seq, 1);
     }
-
-
-    /* don't forget to free the space */
-    if (msg->data!=NULL) free(msg->data);
-    if (msg!=NULL) free(msg);
 }

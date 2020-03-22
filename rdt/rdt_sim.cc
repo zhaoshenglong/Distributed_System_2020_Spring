@@ -526,7 +526,7 @@ int main(int argc, char *argv[])
     if (message_verfication_passed && (tot_chars_sent==tot_chars_delivered))
 	fprintf(stdout, "## Congratulations! This session is error-free, loss-free, and in order.\n");
     else
-	fprintf(stdout, "## Something is wrong! This session is NOT error-free, loss-free, and in order.\n");
+	fprintf(stdout, "## Something is wrong! This session is NOT error-free, loss-free, and in order. %d\n", message_verfication_passed);
 
     return 0;
 }

@@ -37,3 +37,9 @@ bool verify_checksum(struct frame *f) {
     }
     return res == 0xffff;
 }
+
+void inc(seq_nr *n) {
+    if (*n < MAX_SEQ) {
+        (*n)++;
+    } else *n = 0;
+}

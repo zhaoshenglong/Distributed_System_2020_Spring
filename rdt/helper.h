@@ -1,10 +1,13 @@
 
+#ifndef _HELPER_H_
+#define _HELPER_H_
+
 #include "rdt_struct.h"
 
-#define MAX_SEQ 15
-#define WINDOW_SZ 8
-#define TIMEOUT 0.3
-#define TIMER_INTERVAL 0.01
+#define MAX_SEQ         15
+#define WINDOW_SZ       8
+#define HEADERSIZE      9
+#define TIMEOUT         0.3
 
 typedef int seq_nr;
 
@@ -13,15 +16,11 @@ struct frame {
     unsigned int nak        : 1;
     unsigned int ack        : 4;
     unsigned int seq        : 4;
+    unsigned int is_end     : 8;
     unsigned int checksum   : 16;
-    char data[RDT_PKTSIZE - 4];
+    char data[RDT_PKTSIZE - HEADERSIZE];
 };
 
-
-struct virtual_timer {
-    double timeout;
-    seq_nr seq;
-};
 
 /*
  * returns true if b is between a and c circularly
@@ -39,8 +38,6 @@ unsigned short compute_checksum(struct frame*);
  */
 bool verify_checksum(struct frame*);
 
-void inc(seq_nr *n) {
-    if (*n < MAX_SEQ) {
-        (*n)++;
-    } else *n = 0;
-}
+void inc(seq_nr *n);
+
+#endif

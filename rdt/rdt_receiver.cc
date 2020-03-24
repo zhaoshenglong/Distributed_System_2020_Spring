@@ -49,8 +49,6 @@ static void send_ack(seq_nr ack) {
     memset(pkt.data, 0, RDT_PKTSIZE);
     set_pkt_ack(&pkt, ack);
     set_pkt_checksum(&pkt, compute_checksum(&pkt));
-    printf("~~~~~~~~~~~~~~~~~~~Receive send ack: %d~~~~~~~~~~~~~~~~~~~~~\n", frame_expected);
-    print_pkt(&pkt);
     Receiver_ToLowerLayer(&pkt);
 }
 
@@ -79,11 +77,6 @@ void Receiver_FromLowerLayer(struct packet *pkt)
     /* extract data from frame */
     if (verify_checksum(pkt)){
         seq_nr seq = get_pkt_seq(pkt);
-        // if (seq == 1 && frame_expected == last_frame && last_frame == 0) {
-        //     printf("++++++++++++++++++++++ Receiver receives seq: %d, expected: %d, last_Frame: %d +++++++++++++++++++\n", seq, frame_expected, last_frame);
-        //     exit(-1);    
-        // }
-        printf("++++++++++++++++++++++ Receiver receives seq: %d, expected: %d +++++++++++++++++++\n", seq, frame_expected);
         if (seq == frame_expected) {
             reassembly_msg(pkt);
             inc(&frame_expected);
@@ -91,17 +84,6 @@ void Receiver_FromLowerLayer(struct packet *pkt)
         } else {
             send_ack(frame_expected);
         }
-    } else {
-        // printf("^^^^^^^^^^^^^^^^^^^^^^ Verify checksum failed ^^^^^^^^^^^^^^^^^^\n");
-        // printf("packet: size: %d, is_end: %d, ack: %d, seq: %d, checksum: %d, verify: %d\n", pkt->data[0], pkt->data[1], pkt->data[2], pkt->data[3], *(unsigned short*)(pkt->data + 4), verify_checksum(pkt));
-
-        // for (int i = 0; i < 10; i++) {
-        //     for (int j = 0; j < 12; j++) {
-        //         printf("%.2x ", pkt->data[i*10+j + 8]);
-        //     }
-        //     printf("\n");
-        // }
-
-        // // exit(-1);
     }
+    // ignore the broken packet
 }

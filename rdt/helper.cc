@@ -36,7 +36,6 @@ bool verify_checksum(struct packet *pkt) {
     while (res >= (1 << 16)) {
         res = (res & 0xffff) + ((res >> 16) & 0xffff); 
     }
-    // printf("%x\n", res);
 
     if(get_pkt_ack(pkt) > MAX_SEQ || get_pkt_ack(pkt) < 0) 
         return false;

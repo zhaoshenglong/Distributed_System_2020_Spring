@@ -13,7 +13,7 @@
 receiver的设计比较简单，主要负责从底层接受packet。
 
 每次receiver收到底层的packet时，就检查checksum，如果checksum正确，receiver就检查包的seq。
-1. 如果seq是receiver在等待的seq，receiver就将收到的packet进行重组成message。每当一个完整的message组装完成，receiver就会把这个message船费Upper layer。receiver发送回去一个ack=收到的seq+1(循环加)，即发送回去的ack是下一个想收的packet的seq。
+1. 如果seq是receiver在等待的seq，receiver就将收到的packet进行重组成message。每当一个完整的message组装完成，receiver就会把这个message传给Upper layer。receiver发送回去一个ack=收到的seq+1(循环加)，即发送回去的ack是下一个想收的packet的seq。
 2. 如果seq不是receiver在等待的seq，则发送回去一个ack，这个ack是receiver想得到的seq。
 
 如果receiver收到的packet的checksum不对，则丢弃。

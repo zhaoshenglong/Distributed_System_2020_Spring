@@ -6,8 +6,8 @@
  *       situations.  In this implementation, the packet format is laid out as 
  *       the following:
  *       
- *       |<-  1 byte  ->|<-             the rest            ->|
- *       | payload size |<-             payload             ->|
+ *       |<-  1 byte  ->|<-  1 byte  ->|<- 1 byte ->|<- 1 byte ->|<- 2 byte ->|<-             the rest            ->|
+ *       | payload size | is msg end   |    ack     |     seq    |  checksum  |<-             payload             ->|
  *
  *       The first byte of each packet indicates the size of the payload
  *       (excluding this single-byte header)

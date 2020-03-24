@@ -95,7 +95,7 @@ seq_nr get_pkt_seq(struct packet *pkt) {
 
 void print_pkt(struct packet *p) {
     printf("^^^^^^^^^^^^^^^^^Start print pkt - size: %d, end: %d, ack: %d, seq: %d, checksum: %x^^^^^^^^^^^^^^^^^^^^\n", get_pkt_payload_size(p), p->data[1], get_pkt_ack(p), get_pkt_seq(p), *(unsigned short*)(p->data + 4));
-    printf("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^Start print payload^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n");
+    printf("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^        Start print payload        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n");
     for (int i = 0; i < 12; i++) {
         for (int j = 0; j < 10; j++) {
             printf("%.2x ",p->data[i*10+j + 6]);

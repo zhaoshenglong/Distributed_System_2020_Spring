@@ -6,8 +6,8 @@
  *       situations.  In this implementation, the packet format is laid out as 
  *       the following:
  *       
- *       |<-  1 byte  ->|<-             the rest            ->|
- *       | payload size |<-             payload             ->|
+ *       |<-  1 byte  ->|<-  1 byte  ->|<- 1 byte ->|<- 1 byte ->|<- 2 byte ->|<-             the rest            ->|
+ *       | payload size | is msg end  |    ack     |     seq    |  checksum  |<-             payload             ->|
  *
  *       The first byte of each packet indicates the size of the payload
  *       (excluding this single-byte header)
@@ -24,17 +24,18 @@
 #include <list>
 
 /* Global variables definition */
-static seq_nr ack_expected;
+static seq_nr sending_frame;
 static seq_nr next_frame_to_send;
-static std::list<struct frame*> msg_buf;
+static std::list<struct packet*> msg_buf;
 static struct packet *sent_pak[WINDOW_SZ];
 static int nsent;
+static std::list<struct virtual_timer *>timer_list;
 
 /* sender initialization, called once at the very beginning */
 void Sender_Init()
 {
     nsent = 0;
-    ack_expected = 0;
+    sending_frame = 0;
     next_frame_to_send = 0;
     fprintf(stdout, "At %.2fs: sender initializing ...\n", GetSimulationTime());
 }
@@ -48,6 +49,33 @@ void Sender_Final()
     fprintf(stdout, "At %.2fs: sender finalizing ...\n", GetSimulationTime());
 }
 
+static void start_timer(seq_nr seq) {
+    if(timer_list.empty()) {
+        Sender_StartTimer(TIMEOUT);
+    }
+    struct virtual_timer *vt = (struct virtual_timer*)malloc(sizeof(struct virtual_timer));
+    vt->seq = seq;
+    vt->start_time = GetSimulationTime();
+    timer_list.push_back(vt);
+}
+
+static void stop_timer(seq_nr seq) {
+    std::list<struct virtual_timer*>::iterator it = timer_list.begin();
+    while (it != timer_list.end() && (*it)->seq != seq) {
+        it++;
+    }
+    ASSERT(it != timer_list.end());
+    timer_list.remove(*it);
+    free(*it);
+
+    if (timer_list.empty()) {
+        Sender_StopTimer();
+    } else {
+        Sender_StartTimer(TIMEOUT);
+    }
+}
+
+
 static void fragmentation(struct message *msg) {
     /* maximum payload size */
     int maxpayload_size = RDT_PKTSIZE - HEADERSIZE;
@@ -56,27 +84,29 @@ static void fragmentation(struct message *msg) {
     int cursor = 0;
 
     while (msg->size - cursor > maxpayload_size) {
-        struct frame *f = (struct frame*)malloc(sizeof(struct frame));
+        struct packet *pkt = (struct packet*)malloc(sizeof(struct packet));
+        memset(pkt->data, 0, RDT_PKTSIZE);
         /* fill in the packet */
-        f->size = maxpayload_size;
-        memcpy(f->data, msg->data+cursor, maxpayload_size);
-        f->is_end = 0;
+        set_pkt_payload_size(pkt, maxpayload_size);
+        memcpy(pkt->data + HEADERSIZE, msg->data+cursor, maxpayload_size);
+        set_pkt_end(pkt, 0);
         /* put into msg_buf */
-        msg_buf.push_back(f);
+        msg_buf.push_back(pkt);
         /* move the cursor */
         cursor += maxpayload_size;
     }
 
     /* send out the last packet */
     if (msg->size > cursor) {
-        struct frame *f = (struct frame*)malloc(sizeof(struct frame));
-        f->size = msg->size - cursor;
-        memcpy(f->data, msg->data + cursor, f->size);
-        msg_buf.push_back(f);
+        struct packet *pkt = (struct packet*)malloc(sizeof(struct packet));
+        memset(pkt->data, 0, RDT_PKTSIZE);
+        set_pkt_payload_size(pkt, msg->size - cursor);
+        memcpy(pkt->data + HEADERSIZE, msg->data + cursor, msg->size - cursor);
+        msg_buf.push_back(pkt);
     }
 
-    struct frame *last_frame = msg_buf.back();
-    last_frame->is_end = 1;
+    struct packet *last_frame = msg_buf.back();
+    set_pkt_end(last_frame, 1);
 }
 
 
@@ -87,17 +117,24 @@ void Sender_FromUpperLayer(struct message *msg)
     fragmentation(msg);
     /* send packet */
     while (nsent < WINDOW_SZ && msg_buf.size() > 0) {
-        struct frame *f = (struct frame*)msg_buf.front();
+        struct packet *pkt = msg_buf.front();
         msg_buf.pop_front();
-        f->nak = 0;
-        f->ack = 0;
-        f->seq = next_frame_to_send;
-        f->checksum = compute_checksum(f);
-        //printf("Sender verify checksum !!!!!!!!!!!!!!!!!! %d\n", verify_checksum(f));
-        sent_pak[f->seq % WINDOW_SZ] = (struct packet*)f;
-        //printf("Sender verify checksum !!!!!!!!!!!!!!!!!! %d\n", verify_checksum((struct frame*)sent_pak[f->seq % WINDOW_SZ]));
-        Sender_ToLowerLayer((struct packet*)f);
-        free(f);
+        set_pkt_seq(pkt, next_frame_to_send);
+        set_pkt_checksum(pkt, compute_checksum(pkt));
+
+        // printf("^^^^^^^^^^^^^^^^^^^^^^ Sender send packet from upper ^^^^^^^^^^^^^^^^^^\n");
+        // printf("packet: size: %d, is_end: %d, ack: %d, seq: %d, checksum: %d, verify: %d\n", pkt->data[0], pkt->data[1], pkt->data[2], pkt->data[3], *(unsigned short*)(pkt->data + 4), verify_checksum(pkt));
+
+        // for (int i = 0; i < 10; i++) {
+        //     for (int j = 0; j < 12; j++) {
+        //         printf("%.2x ", pkt->data[i*10+j + 8]);
+        //     }
+        //     printf("\n");
+        // }
+
+        sent_pak[next_frame_to_send % WINDOW_SZ] = pkt;
+        start_timer(next_frame_to_send);
+        Sender_ToLowerLayer(pkt);
         nsent++;
         inc(&next_frame_to_send);
     }
@@ -107,30 +144,41 @@ void Sender_FromUpperLayer(struct message *msg)
    sender */
 void Sender_FromLowerLayer(struct packet *pkt)
 {
-    struct frame *f = (struct frame*) pkt;
-    //printf("Sender From lower layer %d\n", verify_checksum(f));
     /* Only dealt with fine packet */
-    if(verify_checksum(f)) {
-        /* Retransmit the packet */
-        if (f->nak && between(ack_expected, f->ack, next_frame_to_send)) {
-            Sender_ToLowerLayer(sent_pak[f->ack % WINDOW_SZ]);
-        }
-
+    if(verify_checksum(pkt)) {
+        seq_nr ack = get_pkt_ack(pkt);
+        // if (!between(ack_expected, ack, next_frame_to_send)) {
+        //     printf("***************** Ack is not expected, ack_expected: %d, ack: %d, next_frame:%d **********************\n", ack_expected, ack, next_frame_to_send);
+        //     // exit(-1);
+        // }
         /* Receive acknowledgement, moves sliding window */
-        while (between(ack_expected, f->ack, next_frame_to_send)) {
+        printf("Sender receive frame: sending: %d, ack: %d, next_frame_to_send: %d\n", sending_frame, ack, next_frame_to_send);
+        print_pkt(pkt);
+        while (between(sending_frame, ack, next_frame_to_send)) {
             nsent = nsent - 1;
-            inc(&ack_expected);
+            stop_timer(sending_frame);
+            free(sent_pak[sending_frame % WINDOW_SZ]);
+            inc(&sending_frame);
         }
 
         while (nsent < WINDOW_SZ && msg_buf.size() > 0) {
-            struct frame *f = (struct frame*)msg_buf.front();
+            struct packet *to_send_frame = msg_buf.front();
             msg_buf.pop_front();
-            f->nak = 0;
-            f->ack = 0;
-            f->seq = next_frame_to_send;
-            f->checksum = compute_checksum(f);
-            sent_pak[f->seq % WINDOW_SZ] = (struct packet *)f;
-            Sender_ToLowerLayer((struct packet*)f);
+            set_pkt_seq(to_send_frame, next_frame_to_send);
+            set_pkt_checksum(to_send_frame, compute_checksum(to_send_frame));
+
+            // printf("^^^^^^^^^^^^^^^^^^^^^^ Sender Receive ack^^^^^^^^^^^^^^^^^^\n");
+            // printf("packet: size: %d, is_end: %d, ack: %d, seq: %d, checksum: %d, verify: %d\n", pkt->data[0], pkt->data[1], pkt->data[2], pkt->data[3], *(unsigned short*)(pkt->data + 4), verify_checksum(pkt));
+
+            // for (int i = 0; i < 10; i++) {
+            //     for (int j = 0; j < 12; j++) {
+            //         printf("%.2x ", pkt->data[i*10+j + 8]);
+            //     }
+            //     printf("\n");
+            // }
+            sent_pak[next_frame_to_send % WINDOW_SZ] = to_send_frame;
+            start_timer(next_frame_to_send);
+            Sender_ToLowerLayer(to_send_frame);
             nsent++;
             inc(&next_frame_to_send);
         }
@@ -140,5 +188,16 @@ void Sender_FromLowerLayer(struct packet *pkt)
 
 /* event handler, called when the timer expires */
 void Sender_Timeout() {
+    std::list<struct virtual_timer*>::iterator it = timer_list.begin();
+    printf("!!!!!!!!!!!!!!!!!!!!!!!!!!!!! Sender Timeout list size: %lu !!!!!!!!!!!!!!!!!!!!!!!!!!!!\n", timer_list.size());
+    while (it != timer_list.end()) {
+        printf("..............Send seq: %d....................\n", (*it)->seq);
+        Sender_ToLowerLayer(sent_pak[(*it)->seq % WINDOW_SZ]);
+        it++;
+    }
+    
+    if (!timer_list.empty()) {
+        Sender_StartTimer(TIMEOUT);
+    }
 }
 

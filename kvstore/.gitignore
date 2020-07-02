@@ -1,0 +1,9 @@
+*.log
+*.ck
+.idea
+*.zip
+*.docx
+*.pptx
+*.iml
+target
+commit_files

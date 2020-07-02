@@ -1,0 +1,6 @@
+address: localhost
+port: 12111
+name: datanode-1
+group: group-1
+weight: 3
+zookeeper: localhost:2181,localhost:2182,localhost:2183
